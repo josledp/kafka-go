@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"sort"
 	"sync"
@@ -198,13 +199,15 @@ func (w *Writer) WriteMessages(ctx context.Context, msgs ...Message) error {
 			w.mutex.RUnlock()
 			return io.ErrClosedPipe
 		}
-
+		defer log.Println("End Write")
 		for _, msg := range msgs {
+			log.Println("Sending message")
 			select {
 			case w.msgs <- writerMessage{
 				msg: msg,
 				res: res,
 			}:
+				log.Println("Message sent")
 			case <-ctx.Done():
 				w.mutex.RUnlock()
 				return ctx.Err()
@@ -220,6 +223,7 @@ func (w *Writer) WriteMessages(ctx context.Context, msgs ...Message) error {
 		var retry []Message
 
 		for i := 0; i != len(msgs); i++ {
+			log.Println("Waiting for answer")
 			select {
 			case e := <-res:
 				if e != nil {
@@ -494,6 +498,7 @@ func (w *writer) run() {
 
 func (w *writer) dial() (conn *Conn, err error) {
 	for _, broker := range shuffledStrings(w.brokers) {
+		log.Println(broker)
 		if conn, err = w.dialer.DialLeader(context.Background(), "tcp", broker, w.topic, w.partition); err == nil {
 			conn.SetRequiredAcks(w.requiredAcks)
 			break
@@ -504,10 +509,16 @@ func (w *writer) dial() (conn *Conn, err error) {
 
 func (w *writer) write(conn *Conn, batch []Message, resch [](chan<- error)) (ret *Conn, err error) {
 	if conn == nil {
+		log.Println("conn == nil")
 		if conn, err = w.dial(); err != nil {
+			log.Println("returning")
 			return
+		} else {
+			log.Println(err)
 		}
+		log.Println("flipa")
 	}
+	log.Println("conn != nil")
 
 	conn.SetWriteDeadline(time.Now().Add(w.writeTimeout))
 

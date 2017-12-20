@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ func TestWriter(t *testing.T) {
 		scenario string
 		function func(*testing.T)
 	}{
-		{
+		/*{
 			scenario: "closing a writer right after creating it returns promptly with no error",
 			function: testWriterClose,
 		},
@@ -28,11 +29,16 @@ func TestWriter(t *testing.T) {
 			scenario: "running out of max attempts should return an error",
 			function: testWriterMaxAttemptsErr,
 		},
+		*/
+		{
+			scenario: "write to unrecheable server should not lock WriteMessages method",
+			function: testWriterUnreacheableServer,
+		},
 	}
 
 	t.Parallel()
 	// Kafka takes a while to create the initial topics and partitions...
-	time.Sleep(15 * time.Second)
+	//time.Sleep(15 * time.Second)
 
 	for _, test := range tests {
 		testFunc := test.function
@@ -99,6 +105,46 @@ func testWriterRoundRobin1(t *testing.T) {
 			break
 		}
 	}
+}
+
+func sendmsg(ctx context.Context, w *Writer) {
+	w.WriteMessages(ctx, Message{Value: []byte("Hello World!")})
+	time.Sleep(100 * time.Millisecond)
+}
+
+func testWriterUnreacheableServer(t *testing.T) {
+	w := newTestWriter(WriterConfig{
+		Topic:             "test-writer-2",
+		Brokers:           []string{"127.0.0.1:9999"},
+		QueueCapacity:     1,
+		BatchSize:         1,
+		MaxAttempts:       1,
+		RebalanceInterval: 1000 * time.Second,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log.Println(time.Now())
+
+	for i := 0; i < 10; i++ {
+		sendmsg(ctx, w)
+	}
+	log.Println(time.Now())
+
+	errch := make(chan error)
+	go func() {
+		err := w.WriteMessages(ctx, Message{Value: []byte("Hello World!")})
+		errch <- err
+	}()
+
+	tickch := time.After(1 * time.Second)
+	select {
+	case err := <-errch:
+		t.Error(err)
+	case <-tickch:
+		t.Error("WriteMessages blocked when using an unreachable server")
+	}
+
 }
 
 type fakeWriter struct{}
